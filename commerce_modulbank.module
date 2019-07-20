@@ -1,0 +1,445 @@
+<?php
+include_once __DIR__ . '/modulbanklib/ModulbankHelper.php';
+include_once __DIR__ . '/modulbanklib/ModulbankReceipt.php';
+
+/**
+ * Implements hook_menu().
+ */
+function commerce_modulbank_menu()
+{
+  $items = array();
+
+  $items['commerce_modulbank/callback'] = array(
+    'page callback'    => 'commerce_modulbank_callback',
+    'page arguments'   => array(),
+    'access arguments' => true,
+    'access callback'  => true,
+    'type'             => MENU_CALLBACK,
+  );
+
+  return $items;
+}
+
+function commerce_modulbank_get_settings($settings)
+{
+  $message = '';
+  $vars    = variable_get('commerce_modulbank_settings', '');
+
+  if (!empty($vars)) {
+    foreach ($vars as $key => $var) {
+      if ($key == $settings) {
+        $message = $vars[$key]['#default_value'];
+        break;
+      }
+    }
+  }
+  return $message;
+}
+
+function commerce_modulbank_commerce_payment_method_info()
+{
+  $payment_methods = array();
+
+  $payment_methods['modulbank'] = array(
+    'base'                 => 'commerce_modulbank',
+    'title'                => 'Модульбанк: Интернет-эквайринг',
+    'short_title'          => 'Модульбанк',
+    'display_title'        => commerce_modulbank_get_settings('name'),
+    'description'          => 'Приём оплат по карте через интернет-эквайринг Модульбанка',
+    'offsite'              => true,
+    'offsite_autoredirect' => true,
+  );
+
+  return $payment_methods;
+}
+
+function commerce_modulbank_default_settings()
+{
+  return array(
+    'name'                    => 'Оплата по карте',
+    'merchant'                => '',
+    'secret_key'              => '',
+    'test_secret_key'         => '',
+    'text_secret_key'         => '',
+    'mode'                    => 'test',
+    'sno'                     => 'usn',
+    'product_vat'             => 'none',
+    'delivery_vat'            => 'none',
+    'payment_object'          => 'commodity',
+    'payment_object_delivery' => 'service',
+    'payment_method'          => 'full_prepayment',
+    'refund_status'           => 'canceled',
+
+  );
+}
+
+function commerce_modulbank_settings_form($settings = null)
+{
+  $sno = array(
+    'osn'                => 'общая СН',
+    'usn_income'         => 'упрощенная СН (доходы)',
+    'usn_income_outcome' => 'упрощенная СН (доходы минус расходы)',
+    'envd'               => 'единый налог на вмененный доход',
+    'esn'                => 'единый сельскохозяйственный налог',
+    'patent'             => 'патентная',
+  );
+  $vat_items = array(
+    'none'   => 'без НДС',
+    'vat0'   => 'НДС по ставке 0%',
+    'vat10'  => 'НДС чека по ставке 10%',
+    'vat20'  => 'НДС чека по ставке 20%',
+    'vat110' => 'НДС чека по расчетной ставке 10/110',
+    'vat120' => 'НДС чека по расчетной ставке 20/120',
+  );
+  $payment_object = array(
+    'commodity'             => 'товар',
+    'excise'                => 'подакцизный товар',
+    'job'                   => 'работа',
+    'service'               => 'услуга',
+    'gambling_bet'          => 'ставка в азартной игре',
+    'gambling_prize'        => 'выигрыш в азартной игре',
+    'lottery'               => 'лотерейный билет',
+    'lottery_prize'         => 'выигрыш в лотерею',
+    'intellectual_activity' => 'результаты интеллектуальной деятельности',
+    'payment'               => 'платеж',
+    'agent_commission'      => 'агентское вознаграждение',
+    'composite'             => 'несколько вариантов',
+    'another'               => 'другое',
+  );
+
+  $payment_method = array(
+    'full_prepayment'    => 'полная предоплата',
+    'partial_prepayment' => 'частичная предоплата',
+    'advance'            => 'аванс',
+    'full_payment'       => 'полный расчет',
+    'partial_payment'    => 'частичный расчет и кредит',
+    'credit'             => 'кредит',
+    'credit_payment'     => 'выплата по кредиту',
+  );
+  $settings     = (array) $settings + commerce_modulbank_default_settings();
+  $form         = array();
+  $form['name'] = array(
+    '#type'          => 'textfield',
+    '#title'         => 'Название',
+    '#default_value' => $settings['name'],
+    '#description'   => 'Отображаемое название способа оплаты в корзине',
+    '#required'      => true,
+  );
+
+  $form['merchant'] = array(
+    '#type'          => 'textfield',
+    '#title'         => 'Мерчант',
+    '#default_value' => $settings['merchant'],
+    '#description'   => '',
+  );
+
+  $form['secret_key'] = array(
+    '#type'          => 'textfield',
+    '#title'         => 'Секретный ключ',
+    '#default_value' => $settings['secret_key'],
+    '#description'   => '',
+  );
+
+  $form['test_secret_key'] = array(
+    '#type'          => 'textfield',
+    '#title'         => 'Тестовый секретный ключ',
+    '#default_value' => $settings['test_secret_key'],
+    '#description'   => '',
+  );
+
+  $form['mode'] = array(
+    '#type'          => 'select',
+    '#title'         => 'Режим',
+    '#options'       => array('prod' => 'Рабочий', 'test' => 'Тестовый'),
+    '#default_value' => $settings['mode'],
+  );
+
+  $form['sno'] = array(
+    '#type'          => 'select',
+    '#title'         => "Система налогобложения",
+    '#options'       => $sno,
+    '#default_value' => $settings['sno'],
+  );
+
+  $form['product_vat'] = array(
+    '#type'          => 'select',
+    '#title'         => "НДС на товары",
+    '#options'       => $vat_items,
+    '#default_value' => $settings['product_vat'],
+
+  );
+
+  $form['delivery_vat'] = array(
+    '#type'          => 'select',
+    '#title'         => "НДС на доставку",
+    '#options'       => $vat_items,
+    '#default_value' => $settings['delivery_vat'],
+
+  );
+
+  $form['payment_object'] = array(
+    '#type'          => 'select',
+    '#title'         => "Признак предмета расчёта",
+    '#options'       => $payment_object,
+    '#default_value' => $settings['payment_object'],
+  );
+
+  $form['payment_object_delivery'] = array(
+    '#type'          => 'select',
+    '#title'         => "Признак предмета расчёта на доставку",
+    '#options'       => $payment_object,
+    '#default_value' => $settings['payment_object_delivery'],
+  );
+
+  $form['payment_method'] = array(
+    '#type'          => 'select',
+    '#title'         => "Признак способа расчёта",
+    '#options'       => $payment_method,
+    '#default_value' => $settings['payment_method'],
+  );
+
+  $state_list = array();
+  foreach (commerce_order_state_get_title() as $name => $title) {
+    foreach (commerce_order_statuses(array('state' => $name)) as $order_status) {
+      $state_list[check_plain($title)][$order_status['name']] = check_plain($order_status['title']);
+    }
+  }
+
+  $form['refund_status'] = array(
+    '#type'          => 'select',
+    '#title'         => 'Статус для возврата',
+    '#options'       => $state_list,
+    '#default_value' => $settings['refund_status'],
+  );
+
+  $form['#submit'][] = variable_set('commerce_modulbank_settings', $form);
+
+  return $form;
+}
+
+function commerce_modulbank_redirect_form($form, &$form_state, $order, $payment_method)
+{
+  $order_wrapper = entity_metadata_wrapper('commerce_order', $order);
+  $settings      = $payment_method['settings'];
+
+  $module_info = system_get_info('module', 'commerce_modulbank');
+  $sysinfo     = [
+    'language' => 'PHP ' . phpversion(),
+    'plugin'   => $module_info['version'],
+    'cms'      => 'Drupal ' . VERSION,
+  ];
+  $currency_code = $order_wrapper->commerce_order_total->currency_code->value();
+  $amount        = $order_wrapper->commerce_order_total->amount->value();
+
+  $amount = number_format(commerce_currency_amount_to_decimal($amount, $currency_code), 2, '.', '');
+
+  $billing_address = $order_wrapper->commerce_customer_billing->commerce_customer_address->value();
+
+  $line_item_ids = array();
+  if (isset($order->commerce_line_items)) {
+    foreach ($order->commerce_line_items['und'] as $item) {
+      $line_item_ids[] = $item['line_item_id'];
+    }
+  }
+
+  $line_items = commerce_line_item_load_multiple($line_item_ids);
+
+  $receipt = new ModulbankReceipt($settings['sno'], $settings['payment_method'], $amount);
+
+  foreach ($line_items as $item) {
+    if ($item->type == 'product') {
+      $receipt->addItem(commerce_line_item_title($item), $item->commerce_unit_price['und'][0]['amount'] / 100, $settings['product_vat'], $settings['payment_object'], $item->quantity);
+    }
+
+    if ($item->type == 'shipping') {
+      $receipt->addItem("Доставка", $item->commerce_total['und'][0]['amount'] / 100, $settings['delivery_vat'], $settings['payment_object_delivery']);
+    }
+  }
+
+  $data = [
+    'merchant'        => $settings['merchant'],
+    'amount'          => $amount,
+    'order_id'        => $order->order_id,
+    'testing'         => $settings['mode'] == 'test' ? 1 : 0,
+    'description'     => 'Оплата заказа №' . $order->order_id,
+    'success_url'     => url('checkout/' . $order->order_id . '/payment/return/' . $order->data['payment_redirect_key'], array('absolute' => true)),
+    'fail_url'        => url('checkout/' . $order->order_id . '/payment/back/' . $order->data['payment_redirect_key'], array('absolute' => true)),
+    'cancel_url'      => url('checkout/' . $order->order_id . '/payment/back/' . $order->data['payment_redirect_key'], array('absolute' => true)),
+    'callback_url'    => url('commerce_modulbank/callback', array('absolute' => true)),
+    'client_name'     => $billing_address['name_line'],
+    'client_email'    => $order->mail,
+    'receipt_contact' => $order->mail,
+    'receipt_items'   => $receipt->getJson(),
+    'unix_timestamp'  => time(),
+    'sysinfo'         => json_encode($sysinfo),
+    'salt'            => ModulbankHelper::getSalt(),
+  ];
+  $key = $settings['mode'] == 'test' ? $settings['test_secret_key'] : $settings['secret_key'];
+
+  $data['signature'] = ModulbankHelper::calcSignature($key, $data);
+  commerce_modulbank_logging($data, 'paymentForm');
+
+  $form['#action'] = 'https://pay.modulbank.ru/pay';
+  foreach ($data as $name => $value) {
+    $form[$name] = array('#type' => 'hidden', '#value' => $value);
+  }
+  $form['submit'] = array(
+    '#type'  => 'submit',
+    '#value' => 'Оплатить');
+  $form['form_build_id']['#access'] = false;
+  $form['form_token']['#access']    = false;
+  $form['form_id']['#access']       = false;
+  $form['#token']                   = false;
+  $form['#build_id']                = false;
+
+  return $form;
+}
+
+function commerce_modulbank_callback()
+{
+  commerce_modulbank_logging($_POST['order_id'], 'callback');
+  $order           = commerce_order_load($_POST['order_id']);
+  $payment_method  = commerce_payment_method_instance_load($order->data['payment_method']);
+  $settings        = $payment_method['settings'];
+  $transaction_id  = $_POST['transaction_id'];
+  $state           = $_POST['state'];
+  $amount_received = (float) $_POST['amount'];
+  $key             = $settings['mode'] == 'test' ? $settings['test_secret_key'] : $settings['secret_key'];
+  $signature       = ModulbankHelper::calcSignature($key, $_POST);
+  if ($signature === $_POST['signature']) {
+    $wrapper       = entity_metadata_wrapper('commerce_order', $order);
+    $currency_code = $wrapper->commerce_order_total->currency_code->value();
+    $amount        = $wrapper->commerce_order_total->amount->value();
+    // Get real price.
+    $amount = commerce_currency_amount_to_decimal($amount, $currency_code);
+
+    // Compare prices and payment.
+    if ($amount_received == $amount && $state === 'COMPLETE') {
+      // LiqPay transaction status.
+      $transaction_info = array(
+        'status'         => COMMERCE_PAYMENT_STATUS_SUCCESS,
+        'transaction_id' => $transaction_id,
+      );
+      commerce_modulbank_payments_create_transaction($order, $transaction_info);
+
+      /*watchdog('commerce_liqpay', 'Order #@order paid status: @status.', array(
+    '@order' => $lp_order_id,
+    '@status' => $lp_status
+    ), WATCHDOG_INFO);
+     */
+    } else {
+      //watchdog('commerce_liqpay', 'Order #@order was not paid: recieved and real order info do not match.<br /> !log', array('@order' => $lp_order_id, '!log' => $log), WATCHDOG_NOTICE);
+    }
+  }
+}
+
+function commerce_modulbank_payments_create_transaction($order, $transaction_info)
+{
+
+  $payment_method = commerce_payment_method_instance_load($order->data['payment_method']);
+
+  $transaction              = commerce_payment_transaction_new('modulbank', $order->order_id);
+  $transaction->instance_id = $payment_method['instance_id'];
+
+  $wrapper = entity_metadata_wrapper('commerce_order', $order);
+
+  $currency_code = $wrapper->commerce_order_total->currency_code->value();
+  $amount        = $wrapper->commerce_order_total->amount->value();
+
+  $transaction->amount            = $amount;
+  $transaction->currency_code     = $currency_code;
+  $transaction->status            = COMMERCE_PAYMENT_STATUS_SUCCESS;
+  $transaction->message_variables = array();
+  $transaction->remote_id         = $transaction_info['transaction_id'];
+  $transaction->uid               = $order->uid;
+  if ($transaction->status == COMMERCE_PAYMENT_STATUS_SUCCESS) {
+    $transaction->message = 'Transaction accepted with id @transaction_id';
+  }
+  $transaction->message_variables = array(
+    '@transaction_id' => $transaction_info['transaction_id'],
+  );
+
+  commerce_payment_transaction_save($transaction);
+
+}
+
+function commerce_modulbank_redirect_form_validate($order, $payment_method)
+{
+  $settings    = $payment_method['settings'];
+  $transaction = $_GET['transaction_id'];
+  $merchant    = $settings['merchant'];
+  commerce_modulbank_logging(array(
+    'merchant'    => $merchant,
+    'transaction' => $transaction,
+  ), 'getTransactionStatus');
+
+  $key = $settings['mode'] == 'test' ? $settings['test_secret_key'] : $settings['secret_key'];
+
+  $result = ModulbankHelper::getTransactionStatus(
+    $merchant,
+    $transaction,
+    $key
+  );
+  commerce_modulbank_logging($result, 'getTransactionStatus_response');
+  $result            = json_decode($result);
+  $paymentStatusText = "Ожидаем поступления средств";
+  if (isset($result->status) && $result->status == "ok") {
+
+    switch ($result->transaction->state) {
+      case 'PROCESSING':$paymentStatusText = "В процессе";
+        break;
+      case 'WAITING_FOR_3DS':$paymentStatusText = "Ожидает 3DS";
+        break;
+      case 'FAILED':$paymentStatusText = "При оплате возникла ошибка";
+        break;
+      case 'COMPLETE':$paymentStatusText = "Оплата прошла успешно";
+        break;
+      default:$paymentStatusText = "Ожидаем поступления средств";
+    }
+  }
+  drupal_set_message("Статус оплаты: " . $paymentStatusText);
+  return true;
+}
+
+function commerce_modulbank_commerce_order_presave($order)
+{
+  if ($order->type == 'commerce_order' && isset($order->data['payment_method'])) {
+
+    $payment_method = commerce_payment_method_instance_load($order->data['payment_method']);
+    $settings       = $payment_method['settings'];
+    if ($payment_method['base'] == 'commerce_modulbank' && $settings['refund_status'] == $order->status) {
+      $payments = commerce_payment_transaction_load_multiple(array(), array('order_id' => $order->order_id, 'payment_method' => 'modulbank'));
+      $payment  = !empty($payments) ? array_shift($payments) : null;
+      if ($payment && $payment->remote_id) {
+        $transaction_id = $payment->remote_id;
+        $merchant       = $settings['merchant'];
+        $wrapper        = entity_metadata_wrapper('commerce_order', $order);
+
+        $currency_code = $wrapper->commerce_order_total->currency_code->value();
+        $amount        = $wrapper->commerce_order_total->amount->value();
+        $key           = $settings['mode'] == 'test' ? $settings['test_secret_key'] : $settings['secret_key'];
+        commerce_modulbank_logging(array(
+          'merchant'       => $merchant,
+          'amount'         => $amount,
+          'transaction_id' => $transaction_id,
+        ), 'refund');
+        $response = ModulbankHelper::refund($merchant, $amount, $transaction_id, $key);
+        commerce_modulbank_logging($response, 'refundResponce');
+      }
+    }
+
+  }
+}
+
+function commerce_modulbank_logging($data, $category)
+{
+  if (is_object($data)) {
+    $data = (array) $data;
+  }
+  watchdog(
+    'commerce_modulbank',
+    $category . '=' . var_export($data, true),
+    null,
+    WATCHDOG_INFO
+  );
+}
