@@ -62,6 +62,7 @@ function commerce_modulbank_default_settings()
     'test_secret_key'         => '',
     'text_secret_key'         => '',
     'mode'                    => 'test',
+    'preauth'                 => '0',
     'sno'                     => 'usn',
     'product_vat'             => 'none',
     'delivery_vat'            => 'none',
@@ -69,6 +70,7 @@ function commerce_modulbank_default_settings()
     'payment_object_delivery' => 'service',
     'payment_method'          => 'full_prepayment',
     'refund_status'           => 'canceled',
+    'capture_status'          => 'completed',
 
   );
 }
@@ -154,6 +156,13 @@ function commerce_modulbank_settings_form($settings = null)
     '#default_value' => $settings['mode'],
   );
 
+  $form['preauth'] = array(
+    '#type'          => 'select',
+    '#title'         => 'Предавторизация',
+    '#options'       => array('0' => 'Нет', '1' => 'Да'),
+    '#default_value' => $settings['preauth'],
+  );
+
   $form['sno'] = array(
     '#type'          => 'select',
     '#title'         => "Система налогобложения",
@@ -212,6 +221,13 @@ function commerce_modulbank_settings_form($settings = null)
     '#default_value' => $settings['refund_status'],
   );
 
+  $form['capture_status'] = array(
+    '#type'          => 'select',
+    '#title'         => 'Статус для подтверждения оплаты',
+    '#options'       => $state_list,
+    '#default_value' => $settings['capture_status'],
+  );
+
   $form['#submit'][] = variable_set('commerce_modulbank_settings', $form);
 
   return $form;
@@ -235,32 +251,14 @@ function commerce_modulbank_redirect_form($form, &$form_state, $order, $payment_
 
   $billing_address = $order_wrapper->commerce_customer_billing->commerce_customer_address->value();
 
-  $line_item_ids = array();
-  if (isset($order->commerce_line_items)) {
-    foreach ($order->commerce_line_items['und'] as $item) {
-      $line_item_ids[] = $item['line_item_id'];
-    }
-  }
-
-  $line_items = commerce_line_item_load_multiple($line_item_ids);
-
-  $receipt = new ModulbankReceipt($settings['sno'], $settings['payment_method'], $amount);
-
-  foreach ($line_items as $item) {
-    if ($item->type == 'product') {
-      $receipt->addItem(commerce_line_item_title($item), $item->commerce_unit_price['und'][0]['amount'] / 100, $settings['product_vat'], $settings['payment_object'], $item->quantity);
-    }
-
-    if ($item->type == 'shipping') {
-      $receipt->addItem("Доставка", $item->commerce_total['und'][0]['amount'] / 100, $settings['delivery_vat'], $settings['payment_object_delivery']);
-    }
-  }
+  $receiptJson = commerce_modulbank_payments_get_receipt($order);
 
   $data = [
     'merchant'        => $settings['merchant'],
     'amount'          => $amount,
     'order_id'        => $order->order_id,
     'testing'         => $settings['mode'] == 'test' ? 1 : 0,
+    'preauth'         => $settings['preauth'],
     'description'     => 'Оплата заказа №' . $order->order_id,
     'success_url'     => url('checkout/' . $order->order_id . '/payment/return/' . $order->data['payment_redirect_key'], array('absolute' => true)),
     'fail_url'        => url('checkout/' . $order->order_id . '/payment/back/' . $order->data['payment_redirect_key'], array('absolute' => true)),
@@ -269,7 +267,7 @@ function commerce_modulbank_redirect_form($form, &$form_state, $order, $payment_
     'client_name'     => $billing_address['name_line'],
     'client_email'    => $order->mail,
     'receipt_contact' => $order->mail,
-    'receipt_items'   => $receipt->getJson(),
+    'receipt_items'   => $receiptJson,
     'unix_timestamp'  => time(),
     'sysinfo'         => json_encode($sysinfo),
     'salt'            => ModulbankHelper::getSalt(),
@@ -314,7 +312,7 @@ function commerce_modulbank_callback()
     $amount = commerce_currency_amount_to_decimal($amount, $currency_code);
 
     // Compare prices and payment.
-    if ($amount_received == $amount && $state === 'COMPLETE') {
+    if ($amount_received == $amount && $order->status != $settings['capture_status'] && ($state === 'COMPLETE' || $state === 'AUTHORIZED')) {
       // LiqPay transaction status.
       $transaction_info = array(
         'status'         => COMMERCE_PAYMENT_STATUS_SUCCESS,
@@ -331,6 +329,42 @@ function commerce_modulbank_callback()
       //watchdog('commerce_liqpay', 'Order #@order was not paid: recieved and real order info do not match.<br /> !log', array('@order' => $lp_order_id, '!log' => $log), WATCHDOG_NOTICE);
     }
   }
+}
+
+function commerce_modulbank_payments_get_receipt($order) {
+  $payment_method = commerce_payment_method_instance_load($order->data['payment_method']);
+  $settings       = $payment_method['settings'];
+  $order_wrapper = entity_metadata_wrapper('commerce_order', $order);
+
+  $module_info = system_get_info('module', 'commerce_modulbank');
+  $currency_code = $order_wrapper->commerce_order_total->currency_code->value();
+  $amount        = $order_wrapper->commerce_order_total->amount->value();
+
+  $amount = number_format(commerce_currency_amount_to_decimal($amount, $currency_code), 2, '.', '');
+
+  $line_item_ids = array();
+  if (isset($order->commerce_line_items)) {
+    foreach ($order->commerce_line_items['und'] as $item) {
+      $line_item_ids[] = $item['line_item_id'];
+    }
+  }
+
+  $line_items = commerce_line_item_load_multiple($line_item_ids);
+
+  $receipt = new ModulbankReceipt($settings['sno'], $settings['payment_method'], $amount);
+
+  foreach ($line_items as $item) {
+    if ($item->type == 'product') {
+      $receipt->addItem(commerce_line_item_title($item), $item->commerce_unit_price['und'][0]['amount'] / 100, $settings['product_vat'], $settings['payment_object'], $item->quantity);
+    }
+
+    if ($item->type == 'shipping') {
+      $receipt->addItem("Доставка", $item->commerce_total['und'][0]['amount'] / 100, $settings['delivery_vat'], $settings['payment_object_delivery']);
+    }
+  }
+
+  return $receipt->getJson();
+
 }
 
 function commerce_modulbank_payments_create_transaction($order, $transaction_info)
@@ -394,6 +428,8 @@ function commerce_modulbank_redirect_form_validate($order, $payment_method)
         break;
       case 'COMPLETE':$paymentStatusText = "Оплата прошла успешно";
         break;
+      case 'AUTHORIZED':$paymentStatusText = "Оплата прошла успешно";
+        break;
       default:$paymentStatusText = "Ожидаем поступления средств";
     }
   }
@@ -417,6 +453,7 @@ function commerce_modulbank_commerce_order_presave($order)
 
         $currency_code = $wrapper->commerce_order_total->currency_code->value();
         $amount        = $wrapper->commerce_order_total->amount->value();
+        $amount = number_format(commerce_currency_amount_to_decimal($amount, $currency_code), 2, '.', '');
         $key           = $settings['mode'] == 'test' ? $settings['test_secret_key'] : $settings['secret_key'];
         commerce_modulbank_logging(array(
           'merchant'       => $merchant,
@@ -424,7 +461,35 @@ function commerce_modulbank_commerce_order_presave($order)
           'transaction_id' => $transaction_id,
         ), 'refund');
         $response = ModulbankHelper::refund($merchant, $amount, $transaction_id, $key);
-        commerce_modulbank_logging($response, 'refundResponce');
+        commerce_modulbank_logging($response, 'refundResponse');
+      }
+    }
+
+    if ($payment_method['base'] == 'commerce_modulbank' && $settings['capture_status'] == $order->status) {
+      $payments = commerce_payment_transaction_load_multiple(array(), array('order_id' => $order->order_id, 'payment_method' => 'modulbank'));
+      $payment  = !empty($payments) ? array_shift($payments) : null;
+      if ($payment && $payment->remote_id) {
+        $transaction_id = $payment->remote_id;
+        $merchant       = $settings['merchant'];
+        $wrapper        = entity_metadata_wrapper('commerce_order', $order);
+
+        $currency_code = $wrapper->commerce_order_total->currency_code->value();
+        $amount        = $wrapper->commerce_order_total->amount->value();
+        $amount = number_format(commerce_currency_amount_to_decimal($amount, $currency_code), 2, '.', '');
+        $key           = $settings['mode'] == 'test' ? $settings['test_secret_key'] : $settings['secret_key'];
+        $receiptJson = commerce_modulbank_payments_get_receipt($order);
+        $data        = [
+          'merchant'        => $settings['merchant'],
+          'amount'          => $amount,
+          'transaction'     => $transaction_id,
+          'receipt_contact' => $order->email,
+          'receipt_items'   => $receiptJson,
+          'unix_timestamp'  => time(),
+          'salt'            => ModulbankHelper::getSalt(),
+        ];
+        commerce_modulbank_logging($data, 'capture');
+        $response = ModulbankHelper::capture($data, $key);
+        commerce_modulbank_logging($response, 'captureResponse');
       }
     }
 
