@@ -2,7 +2,7 @@
 
 Модуль позволяет принимать платежи банковской картой через Модульбанк.
 
-Модуль для установки через UI. [Скачать модуль](https://github.com/modulbank-pay/modulbank-commerce/releases/download/1.1.0/modulbank_drupal-1.1.0.zip)
+Модуль для установки через UI. [Скачать модуль](https://github.com/modulbank-pay/modulbank-commerce/rreleases/latest/download/modulbank_drupal.zip)
 
 ### Установка
 
