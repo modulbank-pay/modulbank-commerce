@@ -71,6 +71,11 @@ function commerce_modulbank_default_settings()
     'payment_method'          => 'full_prepayment',
     'refund_status'           => 'canceled',
     'capture_status'          => 'completed',
+    'show_custom_pm'          => '0',
+    'card'                    => '1',
+    'sbp'                     => '1',
+    'googlepay'               => '1',
+    'applepay'                => '1',
 
   );
 }
@@ -207,6 +212,8 @@ function commerce_modulbank_settings_form($settings = null)
     '#default_value' => $settings['payment_method'],
   );
 
+
+
   $state_list = array();
   foreach (commerce_order_state_get_title() as $name => $title) {
     foreach (commerce_order_statuses(array('state' => $name)) as $order_status) {
@@ -226,6 +233,41 @@ function commerce_modulbank_settings_form($settings = null)
     '#title'         => 'Статус для подтверждения оплаты',
     '#options'       => $state_list,
     '#default_value' => $settings['capture_status'],
+  );
+
+  $form['show_custom_pm'] = array(
+    '#type'          => 'checkbox',
+    '#title'         => 'Отображать определённые способы оплаты',
+    '#default_value' => $settings['show_custom_pm'],
+    '#description'   => 'Для отображения отдельных методов оплаты установите галочку и выберите интересующие из списка',
+  );
+
+  $form['card'] = array(
+    '#type'          => 'checkbox',
+    '#title'         => 'По карте',
+    '#default_value' => $settings['card'],
+    '#description'   => '',
+  );
+
+  $form['sbp'] = array(
+    '#type'          => 'checkbox',
+    '#title'         => 'Система бысрых платежей',
+    '#default_value' => $settings['sbp'],
+    '#description'   => '',
+  );
+
+  $form['googlepay'] = array(
+    '#type'          => 'checkbox',
+    '#title'         => 'GooglePay',
+    '#default_value' => $settings['googlepay'],
+    '#description'   => '',
+  );
+
+  $form['applepay'] = array(
+    '#type'          => 'checkbox',
+    '#title'         => 'ApplePay',
+    '#default_value' => $settings['applepay'],
+    '#description'   => '',
   );
 
   $form['#submit'][] = variable_set('commerce_modulbank_settings', $form);
@@ -272,6 +314,15 @@ function commerce_modulbank_redirect_form($form, &$form_state, $order, $payment_
     'sysinfo'         => json_encode($sysinfo),
     'salt'            => ModulbankHelper::getSalt(),
   ];
+
+  if ($settings['show_custom_pm']) {
+      $methods = ['card', 'sbp', 'applepay', 'googlepay'];
+      $methods = array_filter($methods, function ($method) use ($settings) {
+        return $settings[$method];
+      });
+      $data['show_payment_methods'] = json_encode(array_values($methods));
+    }
+
   $key = $settings['mode'] == 'test' ? $settings['test_secret_key'] : $settings['secret_key'];
 
   $data['signature'] = ModulbankHelper::calcSignature($key, $data);

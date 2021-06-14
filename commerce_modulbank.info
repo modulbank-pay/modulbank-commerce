@@ -8,7 +8,7 @@ dependencies[] = commerce_order
 core = 7.x
 
 ; Information added by Drupal.org packaging script on 2018-10-22
-version = "1.1.0"
+version = "1.2.0"
 core = "7.x"
 project = "commerce_modulbank"
 datestamp = "1540244884"
